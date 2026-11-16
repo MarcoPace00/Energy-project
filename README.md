@@ -2,6 +2,8 @@
 
 A data pipeline and interactive dashboard for the Italian power market, updated daily.
 
+**Live dashboard: https://marcopace00.github.io/Energy-project/**
+
 **Goal of the project:** estimate how much a battery in each Italian bidding zone can earn,
 how much of that is lost by trading on forecasts instead of known prices, and what the
 risk of a small energy book looks like. Built in stages:
