@@ -1,0 +1,66 @@
+# LOCAL MODE: the full stack on your machine.
+#
+#   cp .env.example .env        (then set the MinIO password)
+#   docker compose up --build
+#
+#   Airflow UI      http://localhost:8080   (trigger the "energy_lab_daily" DAG)
+#   MinIO console   http://localhost:9001   (log in with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD)
+#   Dashboard       http://localhost:8000
+#
+# Containers reach each other by service name on Docker's internal network:
+# inside Airflow, MinIO is "minio:9000", not "localhost:9000".
+
+services:
+  minio:
+    image: coollabsio/minio   # the image used in the course project
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - minio-data:/data   # named volume: the lake survives "docker compose down"
+
+  airflow:
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    image: energy-lab-airflow:0.1
+    # "standalone" runs scheduler + web server + DAG processor in one container, with a
+    # SQLite metadata database. Fine for one person on a laptop; a production deployment
+    # splits them (like the course compose file with Postgres and Redis).
+    command: standalone
+    restart: unless-stopped
+    depends_on:
+      - minio
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"   # no login screen: local use only!
+      PYTHONPATH: /opt/project                                # makes "import energy_lab" work
+      LAKE_MODE: s3
+      LAKE_ROOT: energy-lake
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      SITE_DATA_DIR: /opt/project/site/data
+      ENTSOE_API_TOKEN: ${ENTSOE_API_TOKEN:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./energy_lab:/opt/project/energy_lab
+      - ./site:/opt/project/site
+
+  dashboard:
+    image: python:3.12-slim
+    command: python -m http.server 8000 -d /site
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./site:/site:ro
+
+volumes:
+  minio-data:

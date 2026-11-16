@@ -1,0 +1,88 @@
+# PUBLIC MODE: GitHub Actions is the scheduler, GitHub Pages is the web host.
+#
+# Every day: run the tests, restore the data lake from the cache, run the pipeline
+# (incremental), save the lake back to the cache, publish site/ to GitHub Pages.
+#
+# One-time setup in the GitHub repo: Settings > Pages > Source = "GitHub Actions".
+
+name: daily-pipeline
+
+on:
+  schedule:
+    # 13:30 UTC every day (cron times on GitHub are UTC): after the day-ahead auction
+    # (~12:45 Italian time), so tomorrow's prices are already published.
+    - cron: "30 13 * * *"
+  workflow_dispatch:        # adds a "Run workflow" button in the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write       # needed to publish to GitHub Pages
+  id-token: write    # proves to Pages that this workflow is allowed to deploy
+
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false   # never kill a run half-way through writing the lake
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # a daily run takes ~5 min; a full ENTSO-E backfill ~90 min
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Tests (offline)
+        run: pytest -q
+
+      # The runner is a fresh, empty machine every time. The cache gives the lake
+      # "memory" between runs, so only new months are downloaded. The cache is private
+      # to the repo's workflows: raw data never becomes publicly downloadable.
+      # If the cache is ever evicted, the pipeline simply backfills from scratch.
+      - name: Restore data lake
+        uses: actions/cache/restore@v4
+        with:
+          path: data/lake
+          key: lake-${{ github.run_id }}
+          restore-keys: lake-
+
+      - name: Run pipeline
+        env:
+          LAKE_MODE: local
+          # Settings > Secrets and variables > Actions > ENTSOE_API_TOKEN.
+          # GitHub hides its value in logs. Without it, the ENTSO-E source is skipped.
+          ENTSOE_API_TOKEN: ${{ secrets.ENTSOE_API_TOKEN }}
+        run: python -m energy_lab.pipeline all
+
+      # always(): even if a later step failed, keep what was downloaded (a backfill is slow)
+      - name: Save data lake
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/lake
+          key: lake-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,6 @@
+# Runtime dependencies. Single source of truth: used by pyproject.toml,
+# by the GitHub Actions runner and by the Airflow Docker image.
+duckdb>=1.4
+pyarrow>=18
+requests>=2.32
+boto3>=1.35

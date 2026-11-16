@@ -1,0 +1,182 @@
+<!doctype html>
+<!--
+  The public dashboard. A static page: no server, no database.
+  1. It downloads data/manifest.json and the .arrow files the pipeline exported.
+  2. Perspective (C++ compiled to WebAssembly, running in a Web Worker in the browser)
+     loads them into in-memory tables.
+  3. <perspective-viewer> shows a table as a chart or grid; every tab is a saved
+     configuration ("restore"), and the visitor can open the settings panel to pivot freely.
+  Library versions are pinned so the page cannot break when Perspective releases.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Italian Power Market Lab</title>
+  <link rel="icon" href="data:," />
+  <meta name="description" content="Weather and demand drivers of Italian power prices by bidding zone, updated daily." />
+  <link rel="stylesheet" crossorigin="anonymous"
+        href="https://cdn.jsdelivr.net/npm/@perspective-dev/viewer@5.6.1/dist/css/themes.css" />
+  <style>
+    :root {
+      --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1b; --muted: #5f5f5a;
+      --border: #deded8; --accent: #1f5f8b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #161617; --surface: #1f1f21; --text: #ececea; --muted: #a3a39d;
+        --border: #34343a; --accent: #7db7e0;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #161617; --surface: #1f1f21; --text: #ececea; --muted: #a3a39d;
+      --border: #34343a; --accent: #7db7e0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 40px; }
+    h1 { font-size: 1.5rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 20px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .tabs button {
+      font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    }
+    .tabs button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .note { color: var(--muted); font-size: 0.9rem; margin: 0 0 10px; min-height: 1.4em; }
+    perspective-viewer {
+      display: block; height: min(70vh, 640px); border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden;
+    }
+    footer { color: var(--muted); font-size: 0.85rem; margin-top: 16px; }
+    footer p { margin: 4px 0; }
+    #error { color: #b3261e; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Italian Power Market Lab</h1>
+  <p class="sub" id="status">Loading data…</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <p class="note" id="note"></p>
+  <perspective-viewer id="viewer"></perspective-viewer>
+
+  <footer>
+    <p id="attribution"></p>
+    <p>Research project, not investment advice. Data may contain errors or gaps.
+       Source code and method: see the repository README.</p>
+    <p id="error"></p>
+  </footer>
+</main>
+
+<script type="module">
+  import "https://cdn.jsdelivr.net/npm/@perspective-dev/viewer@5.6.1/dist/cdn/perspective-viewer.js";
+  import "https://cdn.jsdelivr.net/npm/@perspective-dev/viewer-datagrid@5.6.1/dist/cdn/perspective-viewer-datagrid.js";
+  import "https://cdn.jsdelivr.net/npm/@perspective-dev/viewer-charts@5.6.1/dist/cdn/perspective-viewer-charts.js";
+  import perspective from "https://cdn.jsdelivr.net/npm/@perspective-dev/client@5.6.1/dist/cdn/perspective.js";
+
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const theme = dark ? "Pro Dark" : "Pro Light";
+
+  // Each tab = which table to show + a saved Perspective configuration.
+  const TABS = [
+    {
+      label: "Solar by zone",
+      note: "Monthly average of daily solar energy reaching the ground (kWh per m² per day). The south (SICI, CALA, SUD) gets more, which matters for where solar depresses midday prices.",
+      config: { table: "weather_daily", title: "Solar energy, kWh/m² per day (monthly average)",
+                plugin: "Y Line", group_by: ["month"], split_by: ["zone"],
+                columns: ["solar_kwh_m2"], aggregates: { solar_kwh_m2: "avg" } },
+    },
+    {
+      label: "Temperature",
+      note: "Monthly average of the daily maximum temperature (°C). Summer heat raises air-conditioning demand and power prices.",
+      config: { table: "weather_daily", title: "Daily max temperature, °C (monthly average)",
+                plugin: "Y Line", group_by: ["month"], split_by: ["zone"],
+                columns: ["temp_max_c"], aggregates: { temp_max_c: "avg" } },
+    },
+    {
+      label: "Solar by hour (last 60 days)",
+      note: "Average solar radiation (W/m²) by hour of day (UTC) and zone, over the last 60 days.",
+      config: { table: "weather_hourly_recent", title: "Solar radiation, W/m², by hour of day (UTC)",
+                plugin: "Heatmap", group_by: ["hour_utc"], split_by: ["zone"],
+                columns: ["solar_radiation_wm2"], aggregates: { solar_radiation_wm2: "avg" } },
+    },
+    {
+      label: "Load forecast",
+      note: "Day-ahead forecast of electricity demand (MW, monthly average), published by Terna through ENTSO-E. NORD alone is more than half of Italian demand; July air-conditioning is the yearly peak and August holidays the yearly low.",
+      config: { table: "load_forecast_daily", title: "Day-ahead load forecast, MW (monthly average)",
+                plugin: "Y Line", group_by: ["month"], split_by: ["zone"],
+                columns: ["load_fc_mean_mw"], aggregates: { load_fc_mean_mw: "avg" } },
+    },
+    {
+      label: "Demand by hour (last 60 days)",
+      note: "Forecast demand by hour of day (UTC) over the last 60 days, as a percentage of each zone's own average (100 = average), so small and large zones are comparable. This is the daily shape solar and batteries have to work around.",
+      config: { table: "load_forecast_hourly_recent", title: "Day-ahead load forecast by hour of day (UTC), % of zone average",
+                plugin: "Heatmap", group_by: ["hour_utc"], split_by: ["zone"],
+                columns: ["load_fc_pct_of_zone_avg"], aggregates: { load_fc_pct_of_zone_avg: "avg" } },
+    },
+    {
+      label: "Data explorer",
+      note: "The full daily table. Open the settings panel (the « button at the top right) to group, pivot, filter and chart it yourself.",
+      config: { table: "weather_daily", title: "Daily weather by zone",
+                plugin: "Datagrid", group_by: [], split_by: [], aggregates: {}, sort: [["day", "desc"]],
+                columns: ["zone", "day", "temp_mean_c", "temp_max_c", "wind_100m_mean_kmh", "solar_kwh_m2"] },
+    },
+  ];
+
+  const viewer = document.getElementById("viewer");
+
+  async function main() {
+    const manifest = await (await fetch("data/manifest.json")).json();
+    const worker = await perspective.worker();
+
+    // Load every exported Arrow file into a named, in-browser Perspective table.
+    for (const [name, info] of Object.entries(manifest.datasets)) {
+      const buf = await (await fetch(`data/${info.file}`)).arrayBuffer();
+      await worker.table(buf, { name });
+    }
+    // The viewer gets the whole worker; each tab picks a table by name in restore().
+    await viewer.load(worker);
+
+    const daily = manifest.datasets.weather_daily;
+    document.getElementById("status").textContent =
+      `Drivers of Italian power prices by bidding zone · weather ${daily.first} to ${daily.last} · built ${manifest.generated_at_utc.replace("T", " ").slice(0, 16)} UTC`;
+    const attributions = new Set(Object.values(manifest.datasets).map(d => d.attribution));
+    document.getElementById("attribution").textContent = [...attributions].join(" · ");
+
+    // Show only the tabs whose data was exported (e.g. no ENTSO-E token -> no load tabs).
+    const available = TABS.filter(t => manifest.datasets[t.config.table]);
+    TABS.splice(0, TABS.length, ...available);
+
+    const tabBar = document.getElementById("tabs");
+    TABS.forEach((tab, i) => {
+      const b = document.createElement("button");
+      b.textContent = tab.label;
+      b.setAttribute("role", "tab");
+      b.onclick = () => show(i);
+      tabBar.appendChild(b);
+    });
+    await show(0);
+  }
+
+  async function show(i) {
+    const tab = TABS[i];
+    document.querySelectorAll("#tabs button").forEach((b, j) =>
+      b.setAttribute("aria-selected", String(j === i)));
+    document.getElementById("note").textContent = tab.note;
+    await viewer.restore({ ...tab.config, theme, filter: [], settings: false });
+  }
+
+  main().catch(err => {
+    document.getElementById("status").textContent = "Could not load the data.";
+    document.getElementById("error").textContent =
+      `${err}. If you opened this file directly, serve the folder instead: python -m http.server -d site 8000`;
+    console.error(err);
+  });
+</script>
+</body>
+</html>

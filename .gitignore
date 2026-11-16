@@ -1,0 +1,36 @@
+# Secrets: never commit. Copy .env.example to .env and fill it in.
+.env
+
+# Private notes (the walkthrough will be adapted for publication later)
+energy_project_ideas.md
+docs/WALKTHROUGH.md
+
+# The data lake and the generated dashboard data are rebuilt by the pipeline.
+# Raw third-party data must not end up in the public repo (see docs/WALKTHROUGH.md, "Licensing").
+data/
+site/data/
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Airflow (local stack)
+logs/
+
+# Editor, assistant and OS files
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+.DS_Store
+
+# Correspondence and downloaded documents (licence PDFs, emails)
+*.eml
+*.pdf
+
+# Notebooks and scratch work
+*.ipynb
+.ipynb_checkpoints/
+scratch/
