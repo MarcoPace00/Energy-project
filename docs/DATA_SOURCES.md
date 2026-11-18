@@ -50,3 +50,18 @@ is updated.
 - **Omitted repeated values.** ENTSO-E leaves out a value when it equals the previous one.
   The parser rebuilds every interval (see
   [energy_lab/ingest/entsoe_xml.py](../energy_lab/ingest/entsoe_xml.py)).
+
+## Time conventions
+
+- **Stored in UTC, shown in Italian time.** The lake stores UTC timestamps. Days and hours on
+  the dashboard are Italian delivery days and hours (Europe/Rome), as in the day-ahead
+  market. The day the clocks go forward has 23 hours and the day they go back has 25; they
+  are kept as they are, so daily energy is lower or higher on those days.
+- **Interval-beginning labels.** As in ENTSO-E data, a value at 13:00 covers 13:00-14:00.
+  Open-Meteo labels hourly averages (solar radiation) by the end of the hour, so they are
+  moved one hour back. Temperature, wind and cloud cover are instant readings and are not
+  moved.
+- **Incomplete days are left out of daily tables** rather than shown with a wrong total. Each
+  run lists them in `manifest.json` (`incomplete_days_left_out`): edge days (start of the
+  history, days not fully published yet) are expected; a gap inside the history raises a
+  warning in the pipeline run.

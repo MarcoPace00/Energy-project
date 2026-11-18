@@ -100,9 +100,9 @@
     },
     {
       label: "Solar by hour (last 60 days)",
-      note: "Average solar radiation (W/m²) by hour of day (UTC) and zone, over the last 60 days.",
-      config: { table: "weather_hourly_recent", title: "Solar radiation, W/m², by hour of day (UTC)",
-                plugin: "Heatmap", group_by: ["hour_utc"], split_by: ["zone"],
+      note: "Average solar radiation (W/m²) by hour of day (Italian time) and zone, over the last 60 days.",
+      config: { table: "weather_hourly_recent", title: "Solar radiation, W/m², by hour of day (Italian time)",
+                plugin: "Heatmap", group_by: ["hour_local"], split_by: ["zone"],
                 columns: ["solar_radiation_wm2"], aggregates: { solar_radiation_wm2: "avg" } },
     },
     {
@@ -114,17 +114,21 @@
     },
     {
       label: "Demand by hour (last 60 days)",
-      note: "Forecast demand by hour of day (UTC) over the last 60 days, as a percentage of each zone's own average (100 = average), so small and large zones are comparable. This is the daily shape solar and batteries have to work around.",
-      config: { table: "load_forecast_hourly_recent", title: "Day-ahead load forecast by hour of day (UTC), % of zone average",
-                plugin: "Heatmap", group_by: ["hour_utc"], split_by: ["zone"],
+      note: "Forecast demand by hour of day (Italian time) over the last 60 days, as a percentage of each zone's own average (100 = average), so small and large zones are comparable. This is the daily shape solar and batteries have to work around.",
+      config: { table: "load_forecast_hourly_recent", title: "Day-ahead load forecast by hour of day (Italian time), % of zone average",
+                plugin: "Heatmap", group_by: ["hour_local"], split_by: ["zone"],
                 columns: ["load_fc_pct_of_zone_avg"], aggregates: { load_fc_pct_of_zone_avg: "avg" } },
     },
     {
       label: "Data explorer",
-      note: "The full daily table. Open the settings panel (the « button at the top right) to group, pivot, filter and chart it yourself.",
-      config: { table: "weather_daily", title: "Daily weather by zone",
+      note: "The full daily table: weather and day-ahead load forecast by zone and Italian day. Open the settings panel (the « button at the top right) to group, pivot, filter and chart it yourself.",
+      config: { table: "zone_daily", title: "Daily weather and load forecast by zone",
                 plugin: "Datagrid", group_by: [], split_by: [], aggregates: {}, sort: [["day", "desc"]],
-                columns: ["zone", "day", "temp_mean_c", "temp_max_c", "wind_100m_mean_kmh", "solar_kwh_m2"] },
+                columns: ["zone", "day", "temp_mean_c", "temp_max_c", "wind_100m_mean_kmh", "solar_kwh_m2",
+                          "load_fc_mean_mw", "load_fc_peak_mw", "load_fc_energy_gwh"] },
+      // without an ENTSO-E token there is no load forecast: show the weather alone
+      fallback: { table: "weather_daily", title: "Daily weather by zone",
+                  columns: ["zone", "day", "temp_mean_c", "temp_max_c", "wind_100m_mean_kmh", "solar_kwh_m2"] },
     },
   ];
 
@@ -145,10 +149,13 @@
     const daily = manifest.datasets.weather_daily;
     document.getElementById("status").textContent =
       `Drivers of Italian power prices by bidding zone · weather ${daily.first} to ${daily.last} · built ${manifest.generated_at_utc.replace("T", " ").slice(0, 16)} UTC`;
-    const attributions = new Set(Object.values(manifest.datasets).map(d => d.attribution));
+    const attributions = new Set(Object.values(manifest.datasets).flatMap(d => d.attribution.split(" · ")));
     document.getElementById("attribution").textContent = [...attributions].join(" · ");
 
     // Show only the tabs whose data was exported (e.g. no ENTSO-E token -> no load tabs).
+    for (const t of TABS) {
+      if (!manifest.datasets[t.config.table] && t.fallback) t.config = { ...t.config, ...t.fallback };
+    }
     const available = TABS.filter(t => manifest.datasets[t.config.table]);
     TABS.splice(0, TABS.length, ...available);
 
